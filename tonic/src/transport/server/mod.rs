@@ -93,6 +93,7 @@ pub struct Server<L = Identity> {
     http2_keepalive_timeout: Option<Duration>,
     http2_adaptive_window: Option<bool>,
     http2_max_pending_accept_reset_streams: Option<usize>,
+    http2_max_send_buf_size: Option<usize>,
     max_frame_size: Option<u32>,
     accept_http1: bool,
     service_builder: ServiceBuilder<L>,
@@ -115,6 +116,7 @@ impl Default for Server<Identity> {
             http2_keepalive_timeout: None,
             http2_adaptive_window: None,
             http2_max_pending_accept_reset_streams: None,
+            http2_max_send_buf_size: None,
             max_frame_size: None,
             accept_http1: false,
             service_builder: Default::default(),
@@ -283,6 +285,15 @@ impl<L> Server<L> {
     pub fn http2_max_pending_accept_reset_streams(self, max: Option<usize>) -> Self {
         Server {
             http2_max_pending_accept_reset_streams: max,
+            ..self
+        }
+    }
+
+    /// Set the maximum write buffer size for each HTTP/2 stream.
+    #[must_use]
+    pub fn http2_max_send_buf_size(self, size: Option<usize>) -> Self {
+        Server {
+            http2_max_send_buf_size: size,
             ..self
         }
     }
@@ -481,6 +492,7 @@ impl<L> Server<L> {
             http2_keepalive_timeout: self.http2_keepalive_timeout,
             http2_adaptive_window: self.http2_adaptive_window,
             http2_max_pending_accept_reset_streams: self.http2_max_pending_accept_reset_streams,
+            http2_max_send_buf_size: self.http2_max_send_buf_size,
             max_frame_size: self.max_frame_size,
             accept_http1: self.accept_http1,
         }
@@ -520,6 +532,7 @@ impl<L> Server<L> {
             .unwrap_or_else(|| Duration::new(DEFAULT_HTTP2_KEEPALIVE_TIMEOUT_SECS, 0));
         let http2_adaptive_window = self.http2_adaptive_window;
         let http2_max_pending_accept_reset_streams = self.http2_max_pending_accept_reset_streams;
+        let http2_max_send_buf_size = self.http2_max_send_buf_size;
 
         let svc = self.service_builder.service(svc);
 
@@ -534,7 +547,7 @@ impl<L> Server<L> {
             _io: PhantomData,
         };
 
-        let server = hyper::Server::builder(incoming)
+        let mut server = hyper::Server::builder(incoming)
             .http2_only(http2_only)
             .http2_initial_connection_window_size(init_connection_window_size)
             .http2_initial_stream_window_size(init_stream_window_size)
@@ -544,6 +557,10 @@ impl<L> Server<L> {
             .http2_adaptive_window(http2_adaptive_window.unwrap_or_default())
             .http2_max_pending_accept_reset_streams(http2_max_pending_accept_reset_streams)
             .http2_max_frame_size(max_frame_size);
+
+        if let Some(max_send_buf_size) = http2_max_send_buf_size {
+           server = server.http2_max_send_buf_size(max_send_buf_size);
+        }
 
         if let Some(signal) = signal {
             server
